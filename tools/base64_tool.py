@@ -1,70 +1,104 @@
+import base64
+import binascii
+import json
 import tkinter as tk
 from tkinter import ttk
-import base64
-import re
+
 
 def create_frame(parent):
-    # Initialize container frame
-    frame = ttk.Frame(parent, padding="10")
+    frame = ttk.Frame(parent, padding=10)
 
-    ttk.Label(frame, text="Input Data:").pack(anchor='w')
-    input_text = tk.Text(frame)
-    input_text.pack(fill='both', expand=True, pady=5)
+    ttk.Label(frame, text="Input data:").pack(anchor="w")
+    input_text = tk.Text(frame, height=10, undo=True, wrap="word")
+    input_text.pack(fill="both", expand=True, pady=(5, 10))
 
-    ttk.Label(frame, text="Result:").pack(anchor='w')
-    output_text = tk.Text(frame, state='disabled')
-    output_text.pack(fill='both', expand=True, pady=5)
+    ttk.Label(frame, text="Result:").pack(anchor="w")
+    output_text = tk.Text(frame, height=10, state="disabled", wrap="word")
+    output_text.pack(fill="both", expand=True, pady=(5, 10))
 
     def set_output(text):
-        # Safely inject text into read-only widget
-        output_text.config(state='normal')
+        output_text.configure(state="normal")
         output_text.delete("1.0", tk.END)
-        output_text.insert(tk.END, text)
-        output_text.config(state='disabled')
+        output_text.insert("1.0", text)
+        output_text.configure(state="disabled")
 
-    def is_likely_base64(s):
-        # Validate format against Base64 and JWT standards
-        clean_s = re.sub(r'[\s.]', '', s)
-        return bool(re.match(r'^[A-Za-z0-9+/=_-]+$', clean_s))
+    def get_input():
+        # Preserve the user's text exactly, except Tk's implicit final newline.
+        return input_text.get("1.0", "end-1c")
 
-    def process_input(event=None):
-        # Auto-detect context and execute appropriate logic
-        input_str = input_text.get("1.0", tk.END).strip()
-        if not input_str:
+    def decode_segment(segment):
+        compact = "".join(segment.split())
+        if not compact:
+            return b""
+
+        padded = compact + "=" * ((4 - len(compact) % 4) % 4)
+        return base64.b64decode(
+            padded.encode("ascii"),
+            altchars=b"-_",
+            validate=True,
+        )
+
+    def format_decoded(data):
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            return f"Binary data ({len(data)} bytes)\nHex:\n{data.hex()}"
+
+        try:
+            obj = json.loads(text)
+        except json.JSONDecodeError:
+            return text
+        return json.dumps(obj, ensure_ascii=False, indent=2)
+
+    def encode_input():
+        data = get_input()
+        encoded = base64.b64encode(data.encode("utf-8")).decode("ascii")
+        set_output(encoded)
+
+    def decode_input():
+        data = get_input()
+        if not data:
             set_output("")
             return
 
-        def decode_segment(segment):
-            padded = segment + "=" * ((4 - len(segment) % 4) % 4)
-            return base64.urlsafe_b64decode(padded).decode('utf-8')
-
-        # Attempt decoding operations first
-        if is_likely_base64(input_str):
-            try:
-                if "." in input_str:
-                    parts = input_str.split(".")
-                    decoded_parts = [decode_segment(p) for p in parts[:2]]
-                    result = "\n***\n".join(decoded_parts)
-                else:
-                    result = decode_segment(input_str)
-                set_output(f"Decoded:\n{result}")
-                return
-            except Exception:
-                pass
-
-        # Fallback to encoding sequence
         try:
-            data = input_str.encode('utf-8')
-            result = base64.b64encode(data).decode('utf-8')
-            set_output(f"Encoded:\n{result}")
-        except Exception as e:
-            set_output(f"Error: {str(e)}")
+            decoded = decode_segment(data)
+            set_output(format_decoded(decoded))
+        except (binascii.Error, ValueError, UnicodeEncodeError) as exc:
+            set_output(f"Invalid Base64 input:\n{exc}")
 
-    # Bind events for real-time automation
-    input_text.bind("<KeyRelease>", process_input)
+    def decode_jwt():
+        token = get_input().strip()
+        parts = token.split(".")
+        if len(parts) < 2:
+            set_output("Invalid JWT: expected at least header.payload")
+            return
 
-    btn_frame = ttk.Frame(frame)
-    btn_frame.pack(fill='x', pady=5)
-    ttk.Button(btn_frame, text="Process", command=process_input).pack(side='left')
+        try:
+            header = format_decoded(decode_segment(parts[0]))
+            payload = format_decoded(decode_segment(parts[1]))
+            set_output(f"Header:\n{header}\n\nPayload:\n{payload}")
+        except (binascii.Error, ValueError, UnicodeEncodeError) as exc:
+            set_output(f"Invalid JWT/Base64URL input:\n{exc}")
+
+    def copy_output():
+        text = output_text.get("1.0", "end-1c")
+        if not text:
+            return
+        frame.clipboard_clear()
+        frame.clipboard_append(text)
+
+    def clear_all():
+        input_text.delete("1.0", tk.END)
+        set_output("")
+        input_text.focus_set()
+
+    button_frame = ttk.Frame(frame)
+    button_frame.pack(fill="x")
+    ttk.Button(button_frame, text="Encode", command=encode_input).pack(side="left")
+    ttk.Button(button_frame, text="Decode", command=decode_input).pack(side="left", padx=(8, 0))
+    ttk.Button(button_frame, text="Decode JWT", command=decode_jwt).pack(side="left", padx=(8, 0))
+    ttk.Button(button_frame, text="Copy", command=copy_output).pack(side="left", padx=(8, 0))
+    ttk.Button(button_frame, text="Clear", command=clear_all).pack(side="left", padx=(8, 0))
 
     return frame
