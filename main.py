@@ -12,6 +12,7 @@ TOOL_REGISTRY = [
     ("MD5", "tools.md5_tool"),
     ("SHA-256", "tools.hash_tool"),
     ("Base64", "tools.base64_tool"),
+    ("Unlock", "tools.handle_tool"),
 ]
 
 
